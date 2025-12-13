@@ -1,0 +1,5 @@
+{
+  "name": "Celiac Safe Finder",
+  "description": "A dark-mode map application for finding certified gluten-free resorts and restaurants.",
+  "requestFramePermissions": []
+}

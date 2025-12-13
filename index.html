@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html class="dark" lang="en">
+<head>
+    <meta charset="utf-8"/>
+    <meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" name="viewport"/>
+    <title>Celiac Safe Finder</title>
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com" rel="preconnect"/>
+    <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+    <link href="https://fonts.googleapis.com/css2?family=Spline+Sans:wght@300;400;500;600;700&amp;family=Noto+Sans:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+
+    <!-- Tailwind -->
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#36e27b",
+                        "background-light": "#f6f8f7",
+                        "background-dark": "#112117",
+                        "surface-dark": "#1E1E1E",
+                    },
+                    fontFamily: {
+                        "display": ["Spline Sans", "sans-serif"],
+                        "body": ["Noto Sans", "sans-serif"],
+                    },
+                    borderRadius: {"DEFAULT": "1rem", "lg": "2rem", "xl": "3rem", "full": "9999px"},
+                    boxShadow: {
+                        'neon': '0 0 10px rgba(54, 226, 123, 0.5), 0 0 20px rgba(54, 226, 123, 0.3)',
+                    }
+                },
+            },
+        }
+    </script>
+
+    <style>
+        body {
+            /* Prevent scrolling on mobile body, handle inside containers */
+            overscroll-behavior: none; 
+            height: 100dvh;
+            width: 100vw;
+        }
+
+        /* Utilities */
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .glass-panel {
+            background: rgba(30, 30, 30, 0.85);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+
+        /* Map Pin Styles */
+        .custom-pin {
+            background-color: #36e27b;
+            border: 2px solid white;
+            border-radius: 50%;
+            box-shadow: 0 0 10px rgba(54, 226, 123, 0.6);
+            transition: all 0.3s ease;
+        }
+        .custom-pin:hover, .custom-pin.active {
+            transform: scale(1.2);
+            box-shadow: 0 0 15px rgba(54, 226, 123, 0.9);
+            background-color: white;
+            border-color: #36e27b;
+        }
+
+        /* Leaflet Overrides for Dark Mode */
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip {
+            background: #1E1E1E;
+            color: white;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+        }
+        .leaflet-popup-content {
+            margin: 10px;
+            font-family: 'Spline Sans', sans-serif;
+        }
+        .leaflet-bar a {
+            background-color: rgba(30, 30, 30, 0.9) !important;
+            color: white !important;
+            border-bottom: 1px solid rgba(255,255,255,0.1) !important;
+        }
+        .leaflet-bar a:hover {
+            background-color: #36e27b !important;
+            color: black !important;
+        }
+        .leaflet-control-attribution {
+            background: rgba(0,0,0,0.5) !important;
+            color: #aaa !important;
+        }
+        .leaflet-control-attribution a { color: #36e27b !important; }
+
+        /* Animation for Bottom Sheet */
+        .slide-up { animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
+        
+        .fade-in { animation: fadeIn 0.3s ease forwards; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    </style>
+</head>
+<body class="bg-background-dark font-display text-white overflow-hidden relative selection:bg-primary selection:text-black">
+
+    <!-- 1. Map Layer (Z-0) -->
+    <div id="map" class="absolute inset-0 z-0 bg-[#0f1512]"></div>
+
+    <!-- 2. Top UI Layer (Z-20) -->
+    <div class="absolute top-0 left-0 w-full z-20 flex flex-col gap-3 p-4 pt-12 pointer-events-none">
+        <!-- Search Bar -->
+        <div class="pointer-events-auto w-full max-w-md mx-auto shadow-2xl">
+            <label class="flex flex-col w-full h-12">
+                <div class="flex w-full flex-1 items-stretch rounded-full h-full glass-panel border border-primary/30 focus-within:border-primary transition-colors">
+                    <div class="text-primary flex border-none items-center justify-center pl-4 rounded-l-full">
+                        <span class="material-symbols-outlined">search</span>
+                    </div>
+                    <input id="search-input" class="flex w-full min-w-0 flex-1 resize-none overflow-hidden rounded-full text-white focus:outline-0 focus:ring-0 border-none bg-transparent h-full placeholder:text-gray-400 px-3 text-base font-normal leading-normal" placeholder="Search locations..." />
+                    <div class="text-white flex border-none items-center justify-center pr-4 rounded-r-full cursor-pointer hover:text-primary transition-colors">
+                        <span class="material-symbols-outlined">tune</span>
+                    </div>
+                </div>
+            </label>
+        </div>
+
+        <!-- Filter Chips -->
+        <div class="pointer-events-auto w-full overflow-x-auto hide-scrollbar pl-1">
+            <div class="flex gap-3 pb-2 pr-4" id="filter-container">
+                <button onclick="filterMap('all')" class="filter-chip active flex h-8 shrink-0 items-center justify-center gap-x-2 rounded-full bg-primary text-black border border-primary px-4 shadow-neon active:scale-95 transition-transform">
+                    <p class="text-sm font-bold leading-normal">All Spots</p>
+                </button>
+                <button onclick="filterMap('Type 1')" class="filter-chip flex h-8 shrink-0 items-center justify-center gap-x-2 rounded-full bg-surface-dark border border-white/10 px-4 shadow-lg active:scale-95 transition-all hover:border-primary/50">
+                    <p class="text-white text-sm font-medium leading-normal">The Bubble</p>
+                    <span class="material-symbols-outlined text-primary text-[16px]">verified_user</span>
+                </button>
+                <button onclick="filterMap('Type 2')" class="filter-chip flex h-8 shrink-0 items-center justify-center gap-x-2 rounded-full bg-surface-dark border border-white/10 px-4 shadow-lg active:scale-95 transition-all hover:border-primary/50">
+                    <p class="text-white text-sm font-medium leading-normal">Fort Knox</p>
+                    <span class="material-symbols-outlined text-primary text-[16px]">lock</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Bottom Sheet Layer (Z-30) -->
+    <div id="bottom-sheet" class="absolute bottom-0 left-0 w-full z-30 flex flex-col bg-surface-dark rounded-t-[24px] shadow-[0_-5px_30px_rgba(0,0,0,0.8)] border-t border-white/10 transition-all duration-300 ease-out" style="height: 45vh;">
+        
+        <!-- Drag Handle -->
+        <div class="w-full flex justify-center pt-3 pb-1 cursor-grab active:cursor-grabbing shrink-0" id="drag-handle">
+            <div class="h-1.5 w-12 rounded-full bg-white/20"></div>
+        </div>
+
+        <!-- Content Container -->
+        <div class="flex-1 overflow-hidden relative">
+            
+            <!-- LIST VIEW -->
+            <div id="list-view" class="h-full flex flex-col fade-in">
+                <div class="px-5 pb-3 pt-2 shrink-0 flex justify-between items-end">
+                    <h2 class="text-white tracking-tight text-[22px] font-bold leading-tight" id="list-title">Safe Spots Nearby</h2>
+                </div>
+                <div class="flex-1 overflow-y-auto px-4 pb-8 space-y-4" id="restaurant-list">
+                    <!-- Cards injected via JS -->
+                </div>
+            </div>
+
+            <!-- DETAIL VIEW (Initially Hidden) -->
+            <div id="detail-view" class="h-full flex flex-col hidden bg-surface-dark absolute inset-0 z-40">
+                <!-- Content injected via JS -->
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <script>
+        // --- 1. Data Setup (Full 50 Entries with Geocoding) ---
+        // Helper function to get image based on vibe/location (simulating CMS)
+        const getImg = (keywords) => {
+            const k = keywords.toLowerCase();
+            if(k.includes('beach') || k.includes('ocean')) return 'https://images.unsplash.com/photo-1571896349842-68cfd429d052?q=80&w=1000';
+            if(k.includes('mountain') || k.includes('alpine')) return 'https://images.unsplash.com/photo-1445019980597-93fa8acb246c?q=80&w=1000';
+            if(k.includes('city') || k.includes('london') || k.includes('york')) return 'https://images.unsplash.com/photo-1514362545857-3bc16c4c7d1b?q=80&w=1000';
+            if(k.includes('italy') || k.includes('pasta')) return 'https://images.unsplash.com/photo-1574071318508-1cdbab80d002?q=80&w=1000';
+            if(k.includes('jungle') || k.includes('green')) return 'https://images.unsplash.com/photo-1540555700478-4be289fbecef?q=80&w=1000';
+            return 'https://images.unsplash.com/photo-1566073771259-6a8506099945?q=80&w=1000';
+        };
+
+        const restaurants = [
+            { id: 1, name: "Anamaya Resort", lat: 9.6558, lng: -85.0609, safetyClass: "Type 1", safetyLabel: "The Bubble", location: "Montezuma, Costa Rica", vibe: "Jungle / Yoga Retreat", price: "$$", website: "https://anamaya.com", desc: "100% Gluten-Free premises. Organic farm-to-table.", badges: ["100% GF", "Organic"] },
+            { id: 2, name: "Gwinganna Lifestyle Retreat", lat: -28.2166, lng: 153.3833, safetyClass: "Type 1", safetyLabel: "The Bubble", location: "Queensland, Australia", vibe: "Wellness / Eco-Luxury", price: "$$$", website: "https://www.gwinganna.com", desc: "Entire property is GF and Dairy Free. No cross-contamination.", badges: ["GF & DF", "Eco"] },
+            { id: 3, name: "The Inn Berlin", lat: 38.3287, lng: -75.0849, safetyClass: "Type 1", safetyLabel: "The Bubble", location: "Maryland, USA", vibe: "Historic / Charming", price: "$$", website: "https://theinnberlin.com", desc: "100% Gluten-Free Bed & Breakfast.", badges: ["B&B", "Historic"] },
+            { id: 4, name: "The Riverside Inn", lat: 44.2965, lng: -71.7676, safetyClass: "Type 1", safetyLabel: "The Bubble", location: "New Hampshire, USA", vibe: "Cozy / Nature", price: "$$", website: "https://www.riversidehotelnh.com", desc: "First 100% GF B&B in New England.", badges: ["100% GF", "Nature"] },
+            { id: 5, name: "Gasthaus Bischenberg", lat: 48.4552, lng: 8.0468, safetyClass: "Type 1", safetyLabel: "The Bubble", location: "Black Forest, Germany", vibe: "Rustic / Nature", price: "$$", website: "https://www.gasthaus-bischenberg.de", desc: "100% Dedicated Gluten-Free Hotel & Restaurant.", badges: ["Dedicated Hotel", "Rustic"] },
+            { id: 6, name: "Hotel Auberge La Fenière", lat: 43.7384, lng: 5.3787, safetyClass: "Type 1", safetyLabel: "The Bubble", location: "Provence, France", vibe: "Culinary / Luxury", price: "$$$", website: "https://www.aubergelafeniere.com", desc: "Chef Nadia Sammut runs a 100% GF Michelin Star kitchen.", badges: ["Michelin Star", "100% GF"] },
+            { id: 7, name: "Hotel Drumlerhof", lat: 46.9175, lng: 11.9568, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "South Tyrol, Italy", vibe: "Alpine Wellness", price: "$$$", website: "https://www.drumlerhof.com", desc: "AIC Certified. Owned by Celiac family. Dedicated areas.", badges: ["AIC Certified", "Spa"] },
+            { id: 8, name: "Hotel Villa Madonna", lat: 46.5639, lng: 11.5833, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Dolomites, Italy", vibe: "Family / Mountain", price: "$$", website: "https://www.villamadonna.it", desc: "AIC Certified. Kitchen divided; specialist staff.", badges: ["AIC Certified", "Family"] },
+            { id: 9, name: "Arenas del Mar", lat: 9.3949, lng: -84.1539, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Manuel Antonio, Costa Rica", vibe: "Rainforest Luxury", price: "$$$", website: "https://www.arenasdelmar.com", desc: "Certified by Celiac Assoc. Dedicated prep area.", badges: ["Certified", "Beachfront"] },
+            { id: 10, name: "Grand Velas Riviera Maya", lat: 20.6669, lng: -87.0372, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Riviera Maya, Mexico", vibe: "Ultra-Luxury All-Inclusive", price: "$$$$", website: "https://rivieramaya.grandvelas.com", desc: "Dedicated allergy-free preparation rooms. Concierge protocol.", badges: ["All-Inclusive", "Protocol"] },
+            { id: 11, name: "Playa Garden Selection Hotel", lat: 39.8059, lng: 3.1203, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Mallorca, Spain", vibe: "Family Beach Resort", price: "$$", website: "https://www.gardenhotels.com", desc: "FACE Certified. Color-coded crockery & dedicated buffet.", badges: ["FACE Certified", "Family"] },
+            { id: 12, name: "Alcudia Garden Aparthotel", lat: 39.8415, lng: 3.1256, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Mallorca, Spain", vibe: "Family / Apartment", price: "$", website: "https://www.gardenhotels.com", desc: "FACE Certified protocols.", badges: ["FACE Certified", "Apartments"] },
+            { id: 13, name: "The Maynard", lat: 53.3073, lng: -1.6377, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Peak District, UK", vibe: "Countryside Boutique", price: "$$", website: "https://www.themaynard.com", desc: "Coeliac UK Accredited.", badges: ["Accredited", "Boutique"] },
+            { id: 14, name: "Vitality Hotel Punta", lat: 44.5230, lng: 14.4716, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Losinj, Croatia", vibe: "Wellness / Island", price: "$$$", website: "https://www.losinj-hotels.com", desc: "First certified GF hotel in Croatia.", badges: ["Certified", "Wellness"] },
+            { id: 15, name: "Avra Imperial Hotel", lat: 35.5303, lng: 23.7744, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Crete, Greece", vibe: "Modern Luxury", price: "$$$", website: "https://www.avraimperialhotel.gr", desc: "Verified GF protocols; Award winner.", badges: ["Award Winning", "Luxury"] },
+            { id: 16, name: "Kamalaya", lat: 9.4286, lng: 99.9863, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Koh Samui, Thailand", vibe: "Spiritual Wellness", price: "$$$", website: "https://www.kamalaya.com", desc: "Wellness sanctuary with separate 'Detox' kitchen protocols.", badges: ["Detox", "Wellness"] },
+            { id: 17, name: "Chiva-Som", lat: 12.5350, lng: 99.9620, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Hua Hin, Thailand", vibe: "Medical Wellness", price: "$$$$", website: "https://www.chivasom.com", desc: "Medical wellness; strict personalized diets.", badges: ["Medical", "Personalized"] },
+            { id: 18, name: "Sandals Grenada", lat: 12.0125, lng: -61.7690, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "St. George's, Grenada", vibe: "Couples / Romantic", price: "$$$", website: "https://www.sandals.com", desc: "Culinary Concierge desk; strictly separate prep.", badges: ["Adults Only", "Concierge"] },
+            { id: 19, name: "El Dorado Maroma", lat: 20.7388, lng: -86.9686, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Riviera Maya, Mexico", vibe: "Romantic / Adults Only", price: "$$$", website: "https://www.karismahotels.com", desc: "Gourmet Inclusive caters to allergies with separate prep.", badges: ["Gourmet", "Romantic"] },
+            { id: 20, name: "Hotel Alexander", lat: 45.5979, lng: 12.8687, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Caorle, Italy", vibe: "Seaside Resort", price: "$$", website: "https://www.hotelalexander.net", desc: "AIC Certified.", badges: ["AIC Certified", "Seaside"] },
+            { id: 21, name: "Hotel Sanremo", lat: 45.6015, lng: 12.8805, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Caorle, Italy", vibe: "Beachfront", price: "$$", website: "https://www.hotelsanremocaorle.it", desc: "AIC Certified.", badges: ["AIC Certified", "Beach"] },
+            { id: 22, name: "Grand Hotel Molveno", lat: 46.1430, lng: 10.9659, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Molveno, Italy", vibe: "Lakeside", price: "$$", website: "https://www.grandhotelmolveno.it", desc: "AIC Certified.", badges: ["AIC Certified", "Lakeside"] },
+            { id: 23, name: "Eden Hotel", lat: 45.7176, lng: 10.7836, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Lake Garda, Italy", vibe: "Italian Lakes", price: "$$", website: "https://www.eden-hotel.it", desc: "AIC Certified.", badges: ["AIC Certified", "Lake View"] },
+            { id: 24, name: "Parador de Cangas de Onís", lat: 43.3643, lng: -5.1386, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Asturias, Spain", vibe: "Historic Monastery", price: "$$", website: "https://www.parador.es", desc: "Paradores group has strict FACE agreement.", badges: ["FACE Agreement", "Historic"] },
+            { id: 25, name: "Goldener Adler", lat: 47.0114, lng: 10.2906, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Ischgl, Austria", vibe: "Ski / Mountain", price: "$$$", website: "https://www.goldener-adler.at", desc: "Marketed as 'Celiac Hotel' with separate cuisine.", badges: ["Skiing", "Dedicated Cuisine"] },
+            { id: 26, name: "Relais Bourgondisch Cruyce", lat: 51.2066, lng: 3.2268, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Bruges, Belgium", vibe: "Historic Boutique", price: "$$$", website: "https://www.relaisbourgondischcruyce.be", desc: "Known for accommodating severe celiacs.", badges: ["Boutique", "Celiac Safe"] },
+            { id: 27, name: "Hotel Gutenberg", lat: 46.6806, lng: 11.2335, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "South Tyrol, Italy", vibe: "Family / Nature", price: "$$", website: "https://www.hotelgutenberg.eu", desc: "Certified by TÜV NORD for allergy safety.", badges: ["TÜV Certified", "Family"] },
+            { id: 28, name: "Como Shambhala Estate", lat: -8.4357, lng: 115.2475, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Bali, Indonesia", vibe: "Jungle Luxury", price: "$$$$", website: "https://www.comohotels.com", desc: "High-end wellness with strict dietary separation.", badges: ["High-End", "Wellness"] },
+            { id: 29, name: "Eichardt's Private Hotel", lat: -45.0312, lng: 168.6626, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Queenstown, New Zealand", vibe: "Lakefront Luxury", price: "$$$$", website: "https://www.eichardts.com", desc: "Boutique nature allows personal chef separation.", badges: ["Private Chef", "Luxury"] },
+            { id: 30, name: "MSC Cruises", lat: 38.0, lng: 16.0, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Mediterranean Sea", vibe: "Cruise", price: "$", website: "https://www.msccruises.com", desc: "Partnership with AIC. Sealed GF galley room.", badges: ["Cruise", "AIC Partner"] },
+            { id: 31, name: "AmaWaterways", lat: 47.4979, lng: 19.0402, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Danube River, Europe", vibe: "River Cruise", price: "$$$", website: "https://www.amawaterways.com", desc: "Highly trained; often host GF sailing weeks.", badges: ["River Cruise", "Trained"] },
+            { id: 32, name: "Hotel Club Saraceno", lat: 39.9238, lng: 9.6873, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Sardinia, Italy", vibe: "Beach Resort", price: "$$", website: "https://www.hotelclubsaraceno.com", desc: "AIC Certified.", badges: ["AIC Certified", "Resort"] },
+            { id: 33, name: "Park Hotel Marinetta", lat: 43.2384, lng: 10.5367, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Tuscany, Italy", vibe: "Coastal Tuscany", price: "$$$", website: "https://www.hotelmarinetta.it", desc: "AIC Certified.", badges: ["AIC Certified", "Coastal"] },
+            { id: 34, name: "Hotel Bristol Buja", lat: 45.3533, lng: 11.7854, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Abano Terme, Italy", vibe: "Thermal Spa", price: "$$$", website: "https://www.bristolbuja.it", desc: "AIC Certified.", badges: ["AIC Certified", "Thermal"] },
+            { id: 35, name: "Hotel Relais Des Glaciers", lat: 45.8456, lng: 7.7346, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Aosta, Italy", vibe: "Alpine / Ski", price: "$$", website: "https://www.hotelrelaisdesglaciers.com", desc: "AIC Certified.", badges: ["AIC Certified", "Ski"] },
+            { id: 36, name: "Grand Hotel Dino", lat: 45.8973, lng: 8.5393, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Lake Maggiore, Italy", vibe: "Grand Lake Hotel", price: "$$$", website: "https://www.zaccherahotels.com", desc: "AIC Certified.", badges: ["AIC Certified", "Grand"] },
+            { id: 37, name: "Hotel Minerva", lat: 43.3245, lng: 11.3289, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Siena, Italy", vibe: "City Historic", price: "$$", website: "https://www.albergominerva.it", desc: "AIC Certified.", badges: ["AIC Certified", "City"] },
+            { id: 38, name: "Hotel Corallo", lat: 44.0678, lng: 12.5786, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Rimini, Italy", vibe: "Beach", price: "$", website: "https://www.hotelcorallorimini.com", desc: "AIC Certified.", badges: ["AIC Certified", "Beach"] },
+            { id: 39, name: "Hotel Gambrinus", lat: 45.6793, lng: 13.1166, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Lignano, Italy", vibe: "Beach Family", price: "$$", website: "https://www.hotelgambrinus.com", desc: "AIC Certified.", badges: ["AIC Certified", "Family"] },
+            { id: 40, name: "Hotel Carlton", lat: 42.4740, lng: 14.2127, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Pescara, Italy", vibe: "City / Beach", price: "$$", website: "https://www.carltonpescara.it", desc: "AIC Certified.", badges: ["AIC Certified", "City"] },
+            { id: 41, name: "Hotel Mediterraneo", lat: 44.0044, lng: 12.6568, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Riccione, Italy", vibe: "Clubbing / Beach", price: "$$", website: "https://www.mediterraneoriccione.com", desc: "AIC Certified.", badges: ["AIC Certified", "Clubbing"] },
+            { id: 42, name: "Hotel Continental", lat: 45.5694, lng: 10.7138, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Garda, Italy", vibe: "Lake Garda", price: "$$", website: "https://www.hotelcontinentalgarda.it", desc: "AIC Certified.", badges: ["AIC Certified", "Lake"] },
+            { id: 43, name: "Hotel Caesius Thermae", lat: 45.5395, lng: 10.7303, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Bardolino, Italy", vibe: "Thermal Spa", price: "$$$", website: "https://www.hotelcaesius.com", desc: "AIC Certified.", badges: ["AIC Certified", "Spa"] },
+            { id: 44, name: "Servigroup Venus", lat: 38.5394, lng: -0.1162, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Benidorm, Spain", vibe: "Resort", price: "$", website: "https://www.servigroup.com", desc: "FACE Agreement; dedicated GF zones.", badges: ["FACE Agreement", "Value"] },
+            { id: 45, name: "Servigroup Galua", lat: 37.6433, lng: -0.7169, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "La Manga, Spain", vibe: "Beach", price: "$", website: "https://www.servigroup.com", desc: "FACE Agreement; dedicated GF zones.", badges: ["FACE Agreement", "Beach"] },
+            { id: 46, name: "Indigo at One Aldwych", lat: 51.5117, lng: -0.1181, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "London, UK", vibe: "City Luxury", price: "$$$", website: "https://www.onealdwych.com", desc: "Restaurant is 100% GF/DF accredited.", badges: ["Accredited", "City"] },
+            { id: 47, name: "Cannelle et Vanille Retreats", lat: 47.6062, lng: -122.3321, safetyClass: "Type 1", safetyLabel: "The Bubble", location: "Seattle, USA", vibe: "Educational / Foodie", price: "$$$", website: "https://www.cannelleetvanille.com", desc: "Strictly GF culinary workshops.", badges: ["Workshops", "Foodie"] },
+            { id: 48, name: "Celiac Cruise", lat: 15.0, lng: -75.0, safetyClass: "Type 1", safetyLabel: "The Bubble", location: "Caribbean Sea", vibe: "Cruise", price: "$$", website: "https://www.celiaccruise.com", desc: "Chartered ships with scrubbed galleys.", badges: ["Chartered", "100% GF"] },
+            { id: 49, name: "The Royal at Atlantis", lat: 25.0854, lng: -77.3204, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "Nassau, Bahamas", vibe: "Mega-Resort", price: "$$$", website: "https://www.atlantisbahamas.com", desc: "Chef's Office protocol; dedicated foil/pans.", badges: ["Protocol", "Mega-Resort"] },
+            { id: 50, name: "Ritz-Carlton Central Park", lat: 40.7635, lng: -73.9749, safetyClass: "Type 2", safetyLabel: "Fort Knox", location: "New York, USA", vibe: "Ultra-Luxury", price: "$$$$", website: "https://www.ritzcarlton.com", desc: "Corporate allergy protocol (verify location).", badges: ["Corporate Protocol", "Luxury"] }
+        ];
+        
+        // Add images to data
+        restaurants.forEach(r => r.image = getImg(r.vibe + ' ' + r.location));
+
+        // --- 2. Map Initialization ---
+        
+        // Center on New York initially as per design request
+        const map = L.map('map', {
+            zoomControl: false,
+            attributionControl: false 
+        }).setView([40.75, -73.98], 13);
+
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 20
+        }).addTo(map);
+
+        // Add Zoom Control to Top Right
+        L.control.zoom({ position: 'topright' }).addTo(map);
+
+        // --- 3. UI Logic & Helper Functions ---
+
+        const markers = {};
+        let activeFilter = 'all';
+
+        // Custom Icon Function
+        function createCustomIcon(isActive) {
+            return L.divIcon({
+                className: 'custom-pin-container',
+                html: `<div class="custom-pin ${isActive ? 'active' : ''} w-4 h-4"></div>`,
+                iconSize: [16, 16],
+                iconAnchor: [8, 8],
+                popupAnchor: [0, -10]
+            });
+        }
+
+        // Render List Card
+        function createCard(item) {
+            return `
+                <div onclick="flyToLocation(${item.id})" class="bg-white/5 p-3 rounded-2xl flex gap-3 border border-white/5 shadow-lg hover:bg-white/10 transition-colors cursor-pointer group active:scale-[0.98]">
+                    <div class="w-24 h-24 shrink-0 rounded-xl overflow-hidden relative bg-gray-800">
+                        <img alt="${item.name}" class="w-full h-full object-cover grayscale opacity-80 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500" src="${item.image}">
+                        <div class="absolute top-1 left-1 bg-black/60 backdrop-blur px-1.5 py-0.5 rounded text-[10px] font-bold text-white flex items-center gap-0.5">
+                            <span class="material-symbols-outlined text-primary text-[10px]">star</span> 5.0
+                        </div>
+                    </div>
+                    <div class="flex-1 flex flex-col justify-between py-0.5">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h3 class="font-bold text-lg text-white group-hover:text-primary transition-colors leading-tight">${item.name}</h3>
+                                <p class="text-xs text-gray-400 mt-1">${item.location} • ${item.vibe} • ${item.price}</p>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5 mt-2">
+                            <div class="px-2 py-1 rounded-full bg-primary/10 border border-primary/40 flex items-center gap-1">
+                                <span class="text-primary text-[10px] font-bold uppercase tracking-wider">${item.safetyLabel}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Initialize App
+        function initApp() {
+            const listContainer = document.getElementById('restaurant-list');
+            listContainer.innerHTML = '';
+
+            // Add Markers and build list
+            restaurants.forEach(item => {
+                // Add Marker
+                const marker = L.marker([item.lat, item.lng], { icon: createCustomIcon(false) })
+                    .addTo(map)
+                    .bindPopup(`<b>${item.name}</b><br>${item.vibe}`);
+                
+                // Add click event to marker
+                marker.on('click', () => {
+                    openDetailView(item);
+                    highlightMarker(item.id);
+                });
+
+                markers[item.id] = marker;
+
+                // Add List Item
+                listContainer.innerHTML += createCard(item);
+            });
+        }
+
+        // Fly to location + Open Detail
+        window.flyToLocation = (id) => {
+            const item = restaurants.find(r => r.id === id);
+            if(item) {
+                map.flyTo([item.lat, item.lng], 15, { duration: 1.5 });
+                highlightMarker(id);
+                openDetailView(item);
+            }
+        };
+
+        // Highlight Active Marker
+        function highlightMarker(id) {
+            Object.values(markers).forEach(m => {
+                const icon = m.getIcon();
+                // Simple reset hack
+                m.setIcon(createCustomIcon(false)); 
+            });
+            if(markers[id]) {
+                markers[id].setIcon(createCustomIcon(true));
+            }
+        }
+
+        // --- 4. Filtering Logic ---
+
+        window.filterMap = (type) => {
+            activeFilter = type;
+            const listContainer = document.getElementById('restaurant-list');
+            listContainer.innerHTML = '';
+            
+            // Update Chip UI
+            const chips = document.querySelectorAll('.filter-chip');
+            chips.forEach(chip => {
+                // Reset styles
+                if(chip.innerText.includes("All") && type === 'all') {
+                    chip.className = "filter-chip active flex h-8 shrink-0 items-center justify-center gap-x-2 rounded-full bg-primary text-black border border-primary px-4 shadow-neon active:scale-95 transition-transform";
+                } else if (chip.innerText.includes("Bubble") && type === 'Type 1') {
+                    chip.className = "filter-chip active flex h-8 shrink-0 items-center justify-center gap-x-2 rounded-full bg-primary text-black border border-primary px-4 shadow-neon active:scale-95 transition-transform";
+                } else if (chip.innerText.includes("Fort Knox") && type === 'Type 2') {
+                    chip.className = "filter-chip active flex h-8 shrink-0 items-center justify-center gap-x-2 rounded-full bg-primary text-black border border-primary px-4 shadow-neon active:scale-95 transition-transform";
+                } else {
+                    chip.className = "filter-chip flex h-8 shrink-0 items-center justify-center gap-x-2 rounded-full bg-surface-dark border border-white/10 px-4 shadow-lg active:scale-95 transition-all hover:border-primary/50 text-white";
+                }
+            });
+
+            // Filter Data
+            restaurants.forEach(item => {
+                const marker = markers[item.id];
+                const shouldShow = (type === 'all' || item.safetyClass === type);
+
+                if (shouldShow) {
+                    if (!map.hasLayer(marker)) map.addLayer(marker);
+                    listContainer.innerHTML += createCard(item);
+                } else {
+                    if (map.hasLayer(marker)) map.removeLayer(marker);
+                }
+            });
+
+            // Update Title
+            const title = document.getElementById('list-title');
+            const count = restaurants.filter(r => type === 'all' || r.safetyClass === type).length;
+            title.innerText = `${count} Safe Spots Found`;
+        };
+
+        // --- 5. Detail View Logic ---
+
+        window.openDetailView = (item) => {
+            const detailView = document.getElementById('detail-view');
+            const bottomSheet = document.getElementById('bottom-sheet');
+            
+            // Generate Detail HTML
+            const badgesHtml = item.badges.map(b => `
+                <div class="flex flex-col items-center gap-2 text-center group">
+                    <div class="w-16 h-16 rounded-full border border-primary bg-primary/10 flex items-center justify-center shadow-[0_0_15px_rgba(54,226,123,0.15)]">
+                        <span class="material-symbols-outlined text-primary text-[24px]">verified</span>
+                    </div>
+                    <span class="text-[10px] font-medium leading-tight text-gray-300">${b}</span>
+                </div>
+            `).join('');
+
+            detailView.innerHTML = `
+                <!-- Image Header (Parallax-ish) -->
+                <div class="relative w-full h-48 shrink-0">
+                    <img src="${item.image}" class="w-full h-full object-cover">
+                    <div class="absolute inset-0 bg-gradient-to-b from-transparent to-surface-dark"></div>
+                    
+                    <button onclick="closeDetailView()" class="absolute top-4 left-4 w-10 h-10 rounded-full bg-surface-dark/60 backdrop-blur border border-white/10 flex items-center justify-center text-white active:bg-primary active:text-black transition-colors z-50">
+                        <span class="material-symbols-outlined">arrow_downward</span>
+                    </button>
+                </div>
+
+                <!-- Scrollable Content -->
+                <div class="flex-1 overflow-y-auto px-6 -mt-6 relative z-10">
+                    <div class="flex justify-between items-start mb-2">
+                        <h1 class="text-3xl font-bold tracking-tight text-white leading-none">${item.name}</h1>
+                        <div class="bg-primary text-black px-2 py-1 rounded-lg text-center leading-none shadow-neon transform rotate-3">
+                             <span class="text-[10px] font-bold uppercase tracking-wider">SAFE</span>
+                        </div>
+                    </div>
+                    
+                    <div class="flex items-center gap-3 text-sm text-gray-300 mb-6">
+                        <span class="text-primary font-bold">★ 5.0</span>
+                        <span class="w-1 h-1 rounded-full bg-gray-600"></span>
+                        <span>${item.vibe}</span>
+                        <span class="w-1 h-1 rounded-full bg-gray-600"></span>
+                        <span>${item.price}</span>
+                    </div>
+
+                    <div class="p-4 rounded-xl bg-white/5 border border-white/5 mb-6">
+                        <p class="text-gray-200 text-sm leading-relaxed">"${item.desc}"</p>
+                    </div>
+
+                    <h2 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">Safety Features</h2>
+                    <div class="flex gap-4 overflow-x-auto hide-scrollbar pb-4">
+                        ${badgesHtml}
+                    </div>
+
+                    <div class="flex flex-col gap-3 mt-4">
+                        <button class="w-full h-14 rounded-2xl bg-primary flex items-center justify-center gap-2 font-bold text-black shadow-neon hover:shadow-[0_0_20px_rgba(54,226,123,0.6)] active:scale-95 transition-all">
+                            <span class="material-symbols-outlined">near_me</span>
+                            Navigate Here
+                        </button>
+                        
+                        <a href="${item.website}" target="_blank" rel="noopener noreferrer" class="w-full h-14 rounded-2xl bg-surface-dark border border-white/10 flex items-center justify-center gap-2 font-bold text-white hover:bg-white/5 transition-all">
+                            <span class="material-symbols-outlined">public</span>
+                            Visit Website
+                        </a>
+                    </div>
+                    
+                    <div class="h-20"></div> <!-- Spacer -->
+                </div>
+            `;
+
+            // Expand Bottom Sheet
+            bottomSheet.style.height = '70vh';
+            
+            // Show Detail View
+            document.getElementById('list-view').classList.add('hidden');
+            detailView.classList.remove('hidden');
+            detailView.classList.add('slide-up');
+        };
+
+        window.closeDetailView = () => {
+            const bottomSheet = document.getElementById('bottom-sheet');
+            const detailView = document.getElementById('detail-view');
+            const listView = document.getElementById('list-view');
+
+            bottomSheet.style.height = '45vh';
+            detailView.classList.add('hidden');
+            listView.classList.remove('hidden');
+            listView.classList.add('fade-in');
+            
+            // Reset marker sizes
+            highlightMarker(null);
+            
+            // Zoom out slightly if zoomed in tight
+            if(map.getZoom() > 13) {
+               // map.setZoom(13); // Optional: reset zoom
+            }
+        };
+
+        // Start
+        initApp();
+
+    </script>
+</body>
+</html>
